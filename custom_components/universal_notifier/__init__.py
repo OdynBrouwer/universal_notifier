@@ -414,6 +414,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
                     if use_bold_prefix:
                         clean_name = apply_formatting(clean_name, parse_mode, "bold")
                         clean_time = apply_formatting(clean_time, parse_mode, "bold")
+                        clean_orig_title = apply_formatting(clean_orig_title, parse_mode, "bold")
                     # 3. Costruzione stringa Prefisso # Formato: [Nome - 12:00]
                     prefix_content = clean_name
                     if clean_time:
