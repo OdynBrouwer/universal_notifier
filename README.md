@@ -45,19 +45,24 @@ It transforms simple automations into a "Smart Home" communication system that k
 
 ___
 
-## 🚀 Installation
+## 🛠️ Installation
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=jumping2000n&repository=universal_notifier&category=Integration)
+
 <details>
-  <summary>Click me</summary>
-
-### Via HACS (Recommended)
-1.  Add this repository as a **Custom Repository** in HACS (Category: *Integration*).
-2.  Search for "Universal Notifier" and install it.
-3.  Restart Home Assistant.
-
-### Manual Installation
-1.  Copy the `universal_notifier` folder into your `/config/custom_components/` directory.
-2.  Restart Home Assistant.
-
+<summary>Click to show installation instructions</summary>
+<ol>
+<li>Install files:</li>
+<ul>
+<li><u>Using HACS:</u><br>
+In the HACS panel, search for 'Universal Notifier', open the repository and click 'Download'.</li>
+<li><u>Manually:</u><br>
+Download the <a href="https://github.com/jumping2000/universal_notifier/releases">latest release</a> as a zip file and extract it into the `custom_components` folder in your HA installation.</li>
+</ul>
+<li>Restart HA to load the integration into HA.</li>
+<li>Go to Settings -> Devices & services and click 'ADD INTEGRATION' button. Look for Universal Notifier and click to add it.</li>
+<li>The Universal Notifier integration is ready for use. You can find the configuration panel in the menu on the left.</li>
+</ol>
 </details>
 
 ## 🔗 Prerequisites
