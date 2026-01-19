@@ -8,8 +8,8 @@ a new release from an idea of @caiosweet and @jumping2000
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-Yes-brightgreen.svg)](https://https://github.com/jumping2000/universal_notifier/graphs/commit-activity?style=for-the-badge)
 [![GitHub issues](https://img.shields.io/github/issues/jumping2000/universal_notifier)](https://github.com/jumping2000/universal_notifier/issues?style=for-the-badge)<br>
 --->
-[![Buy me a coffee](https://cdn.buymeacoffee.com/buttons/bmc-new-btn-logo.svg)](https://www.buymeacoffee.com/jumping)<span style="margin-left:15px;font-size:38px !important;"><b>Buy me a coffee and give me a star ✨!</b></span>
-<a href="https://www.buymeacoffee.com/jumping"><img src="https://cdn.buymeacoffee.com/buttons/default-yellow.png" height="20"></a>
+### Buy me a coffee and give me a star ✨!
+[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/jumping)
 
 ___
 
@@ -17,7 +17,7 @@ ___
 
 Trasforma semplici automazioni in un sistema di comunicazione "Smart Home" che conosce l'ora del giorno, rispetta il tuo sonno (DND), saluta in modo naturale e gestisce automaticamente il volume degli assistenti vocali.
 
-## ✨ Caratteristiche Principali
+## 🚀 Caratteristiche Principali
 
 * **Piattaforma Unificata:** Un solo servizio (`universal_notifier.send`) per Telegram, App Mobile, Alexa, Google Home, ecc.
 * **Notifiche personalizzate** a più destinatari (ad esempio, notifica di allarme sia a Telegram che ad Alexa)
@@ -33,7 +33,7 @@ ___
 
 It transforms simple automations into a "Smart Home" communication system that knows the time of day, respects your sleep (Do Not Disturb - DND), greets naturally, and automatically manages the volume of voice assistants.
 
-## ✨ Key Features
+## 🚀 Key Features
 
 * **Unified Platform:** A single service (`universal_notifier.send`) for Telegram, Mobile App, Alexa, Google Home, etc.
 * **Personalized notifications** to several targets (i.e. alarm notification to both Telegram and Alexa)
