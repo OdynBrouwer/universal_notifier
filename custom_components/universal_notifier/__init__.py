@@ -104,7 +104,7 @@ def apply_formatting(text: str, parse_mode: str, style: str = "bold") -> str:
     if "html" in mode:
         if style == "bold": return f"<b>{text}</b>"
     elif "markdown" in mode:
-        return f"**§{text}**" 
+        return f"**{text}**" 
     return text
 
 # ==============================================================================
@@ -131,18 +131,27 @@ async def _get_player_snapshot(hass: HomeAssistant, entity_id: str) -> dict:
         "entity_id": entity_id
     }
     _ORIGINAL_STATES[entity_id] = snap
-    _LOGGER.debug(f"UniNotifier: Snapshot originale salvato per {entity_id}: {snap['state']}")
+    _LOGGER.debug(f"UniNotifier: Snapshot originale salvato per {entity_id}: {snap}")
     return snap
 
-async def _apply_resume(hass: HomeAssistant, entity_id: str):
+async def _apply_resume(hass: HomeAssistant, entity_id: str, target_volume: float):
     """Ripristina lo stato salvato all'inizio della sessione."""
     snap = _ORIGINAL_STATES.pop(entity_id, None)
-    if not snap: return
+    if not snap: 
+        await hass.services.async_call("media_player", "volume_set", {
+            "entity_id": entity_id, "volume_level": target_volume
+        })
+        return
     # 1. Ripristino Volume
     if snap["volume"] is not None:
         await hass.services.async_call("media_player", "volume_set", {
             "entity_id": entity_id, "volume_level": snap["volume"]
         })
+    # else:
+    #     await hass.services.async_call("media_player", "volume_set", {
+    #         "entity_id": entity_id, "volume_level": target_volume
+    #     })
+    _LOGGER.debug(f"UniNotifier: Resume del volume di {entity_id} con {snap["volume"]}")
     # 2. Ripristino Contenuto (solo se stava suonando prima della prima notifica)
     if snap["state"] == STATE_PLAYING:
         app = (snap.get("app_name") or "").lower()
@@ -175,7 +184,7 @@ TIME_SLOT_SCHEMA = vol.Schema({
 # Schema per un canale
 CHANNEL_SCHEMA = vol.Schema({
     vol.Required(CONF_SERVICE): cv.string,
-    vol.Optional(CONF_TARGET): cv.string,
+    vol.Optional(CONF_TARGET): vol.Any(cv.string, vol.All(cv.ensure_list, [cv.string])), #cv.string, 
     vol.Optional(CONF_IS_VOICE, default=False): cv.boolean,
     vol.Optional(CONF_SERVICE_DATA): dict,
     vol.Optional(CONF_ALT_SERVICES): dict
@@ -246,25 +255,31 @@ async def async_setup(hass: HomeAssistant, config: dict):
             task = await voice_queue.get()
             try:
                 players = task['physical_players']
+                target_vol = task['target_volume']
                 # 1. SNAPSHOT: Salviamo lo stato attuale di ogni speaker
                 # 1. SNAPSHOT (Solo all'inizio della catena)
                 for eid in players:
                     await _get_player_snapshot(hass, eid)
-                # 2. ESECUZIONE NOTIFICA
+                # 2. IMPOSTA VOLUME TARGET
+                if players and target_vol is not None:
+                    await hass.services.async_call("media_player", "volume_set", {
+                        "entity_id": players, "volume_level": target_vol
+                    })
+                # 3. ESECUZIONE NOTIFICA
                 _LOGGER.debug(f"UniNotifier: Elaborazione messaggio vocale: {task['text_content'][:35]}...")
                 await hass.services.async_call(task['domain'], task['service'], task['payload'])
-                # 3. ATTESA FINE MESSAGGIO
+                # 4. ATTESA FINE MESSAGGIO
                 wait_time = estimate_tts_duration(task['text_content'])
                 _LOGGER.debug(f"UniNotifier: Attesa di {wait_time:.2f}s per fine messaggio.")
                 await asyncio.sleep(wait_time)
-                # 4. CONTROLLO CODA PER RESUME
+                # 5. CONTROLLO CODA PER RESUME
                 # Se la coda è vuota, significa che questo era l'ultimo messaggio.
                 # Possiamo procedere al ripristino della musica originale.
                 if voice_queue.empty():
                     _LOGGER.debug("UniNotifier: Coda vuota, chiusura sessione e ripristino media.")
                     # Ripristiniamo tutti i player che erano coinvolti nella sessione
                     for eid in list(_ORIGINAL_STATES.keys()):
-                        await _apply_resume(hass, eid)
+                        await _apply_resume(hass, eid, target_vol)
                 else:
                     _LOGGER.debug(f"UniNotifier: Coda non vuota ({voice_queue.qsize()} messaggi), posticipo resume.")
             except Exception as e:
@@ -333,14 +348,16 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 continue
             channel_conf = channels_config[target_alias]
             _LOGGER.debug(f"UniNotifier: Channel Configuration {channel_conf }")
-            
+
+            ####################################################################               
             # A. Preparazione Dati Specifici
             specific_data = {}
             if target_alias in target_specific_data:
                 specific_data = target_specific_data[target_alias].copy()
             _LOGGER.debug(f"UniNotifier: Specific Data {specific_data}")
             target_raw_message = specific_data.pop(CONF_MESSAGE, global_raw_message)
-            
+
+            ####################################################################               
             # B. Selezione Servizio
             service_type = specific_data.pop(CONF_TYPE, runtime_data.get(CONF_TYPE, None))
             alt_services_conf = channel_conf.get(CONF_ALT_SERVICES, {})
@@ -356,10 +373,8 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 full_service_name = channel_conf[CONF_SERVICE]
                 base_service_payload = channel_conf.get(CONF_SERVICE_DATA, {}) or {}
                 is_voice_channel = channel_conf[CONF_IS_VOICE]
-
             _LOGGER.debug(f"UniNotifier: Full Service Name {full_service_name}")
             _LOGGER.debug(f"UniNotifier: Base Service Payload {base_service_payload}")
-
             # Estrai domini per controlli successivi
             try:
                 srv_domain, srv_name = full_service_name.split(".", 1)
@@ -367,11 +382,13 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 _LOGGER.error(f"UniNotifier: Servizio non valido {full_service_name}")
                 continue
 
+            ####################################################################   
             # C. Check Comandi
             is_command_message = False
             if target_raw_message in COMPANION_COMMANDS or str(target_raw_message).startswith("command_"):
                 is_command_message = True
 
+            ####################################################################   
             # D. COSTRUZIONE MESSAGGIO E TITOLO
             parse_mode = specific_data.get("parse_mode", runtime_data.get("parse_mode"))
             if not parse_mode and srv_domain == "telegram_bot":
@@ -443,6 +460,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
             else:
                 target_volume = slot_volume
 
+            ####################################################################
             # F. IDENTIFICAZIONE DEI PLAYER FISICI (Per Volume e Invio)
             # 1. Cerca in tts (media_player_entity_id standard)
             tts_players = base_service_payload.get("media_player_entity_id", [])
@@ -458,6 +476,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
             if notify_targets and is_voice_channel:
                 media_players_targets.extend(notify_targets)
 
+            ####################################################################
             # G. Applicazione Volume e Check DND (Solo Canali Voce)
             if is_voice_channel:
                 if is_dnd_active and not is_priority and override_volume is None:
@@ -465,7 +484,8 @@ async def async_setup(hass: HomeAssistant, config: dict):
                     continue
                 _LOGGER.debug(f"UniNotifier: MediaPlayer {media_players_targets} - Volume {target_volume}")
 
-            ############### H. Costruzione Payload Finale ######################
+            ####################################################################
+            # H. Costruzione Payload Finale 
             service_payload = base_service_payload.copy()
             # Mapping Messaggio
             if srv_domain == "telegram_bot":
@@ -482,15 +502,23 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 if service_type in ["photo", "video"]: 
                     service_payload["caption"] = final_title + " " + final_msg
                     service_payload.pop("title", None)
-            
+            ####################################################################           
             # I. Routing dei Target nel Payload
             # Caso 1: TTS usa 'media_player_entity_id' già presente nei dati base.
             # Caso 2: Provider TTS (es. google_translate)
-            if srv_domain == "tts" and CONF_TARGET in channel_conf:
-                provider_entity = channel_conf.get(CONF_TARGET)
-                if provider_entity:
-                    service_payload[ATTR_ENTITY_ID] = provider_entity
+            # if srv_domain == "tts" and CONF_TARGET in channel_conf:
+            #     provider_entity = channel_conf.get(CONF_TARGET)
+            #     if provider_entity:
+            #         service_payload[ATTR_ENTITY_ID] = provider_entity
+            conf_target_value = channel_conf.get(CONF_TARGET)
             
+            if conf_target_value:
+                if srv_domain == "tts":
+                    service_payload[ATTR_ENTITY_ID] = conf_target_value
+                else:
+                    # Per notify (Discord, Telegram, etc.) aggiungiamo 'target' al payload
+                    service_payload[CONF_TARGET] = conf_target_value
+            ####################################################################    
             # J. Merge Dati Accessori (alexa type, telegram images, etc.)
             all_additional_data = {}
             if runtime_data: all_additional_data.update(runtime_data)
@@ -536,18 +564,14 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 # Pulizia: teniamo solo entità valide che iniziano con media_player
                 physical_players = [p for p in physical_players if isinstance(p, str) and p.startswith("media_player.")]
                 _LOGGER.debug(f"UniNotifier: Media players coinvolti {physical_players}.")
-                # # Gestione Volume (Immediata prima di entrare in coda)
-                if physical_players:
-                    await hass.services.async_call("media_player", "volume_set", {
-                        "entity_id": physical_players, "volume_level": target_volume
-                    })
                 # Aggiunta alla CODA FIFO per Snapshot/Play/Restore
                 queue_item = {
                     'domain': srv_domain,
                     'service': srv_name,
                     'payload': service_payload,
                     'text_content': text_content_for_duration,
-                    'physical_players': physical_players
+                    'physical_players': physical_players,
+                    'target_volume': target_volume
                 }
                 # Aggiungi alla coda (non bloccante)
                 voice_queue.put_nowait(queue_item)
@@ -561,8 +585,5 @@ async def async_setup(hass: HomeAssistant, config: dict):
         if tasks:
             await asyncio.gather(*tasks)
 
-    hass.services.async_register(
-        DOMAIN, "send", async_send_notification, schema=SEND_SERVICE_SCHEMA
-    )
-    
+    hass.services.async_register(DOMAIN, "send", async_send_notification, schema=SEND_SERVICE_SCHEMA)
     return True
