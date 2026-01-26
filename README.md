@@ -61,7 +61,7 @@ Download the <a href="https://github.com/jumping2000/universal_notifier/releases
 </ul>
 <li>Restart HA to load the integration into HA.</li>
 <li>Go to Settings -> Devices & services and click 'ADD INTEGRATION' button. Look for Universal Notifier and click to add it.</li>
-<li>The Universal Notifier integration is ready for use. You can find the configuration panel in the menu on the left.</li>
+<li>The Universal Notifier integration is ready for YAML configuration.</li>
 </ol>
 </details>
 
@@ -88,7 +88,7 @@ Time slots default value:
 |morning|07:00|0.35|
 |afternoon|12:00|0.4|
 |evening|19:00|0.3|
-|night|022:00|0.1|
+|night|22:00|0.1|
 
 Do Not Disturb default value:
 |Service|Start|End|
