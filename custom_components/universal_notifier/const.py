@@ -15,17 +15,18 @@ CONF_DND = "dnd"
 CONF_MESSAGE = "message"
 CONF_TITLE = "title"
 CONF_TARGETS = "targets"
-CONF_DATA = "data"          # Dati extra generici
+CONF_DATA = "data"
 CONF_TARGET_DATA = "target_data"
 CONF_PRIORITY = "priority"
 CONF_SKIP_GREETING = "skip_greeting"
 CONF_INCLUDE_TIME = "include_time"
 CONF_OVERRIDE_GREETINGS = "override_greetings"
 CONF_BOLD_PREFIX = "bold_prefix"
+CONF_PRIORITY_VOLUME = "priority_volume"
 
 # --- Chiavi Canale Singolo ---
 CONF_SERVICE = "service"
-CONF_SERVICE_DATA = "service_data"
+#CONF_SERVICE_DATA = "service_data"
 CONF_TARGET = "target"
 CONF_ENTITY_ID = "entity_id"
 CONF_IS_VOICE = "is_voice"
@@ -52,7 +53,7 @@ DEFAULT_TIME_SLOTS = {
 DEFAULT_DND = {"start": "23:00", "end": "06:00"}
 
 # --- Priority Settings ---
-PRIORITY_VOLUME = 0.9  # Volume al 90% se priority=True
+DEFAULT_PRIORITY_VOLUME = 0.9  # Volume al 90% se priority=True
 
 # --- Default Greetings ---
 DEFAULT_GREETINGS = {

@@ -6,12 +6,12 @@ import re
 import asyncio
 import math
 import voluptuous as vol
-import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers import discovery, config_validation as cv
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.const import ATTR_ENTITY_ID, EVENT_HOMEASSISTANT_STOP, STATE_PLAYING, CONF_SERVICE, CONF_TYPE
 from homeassistant.util import dt as dt_util
-
-# Importiamo TUTTE le costanti necessarie
+####
+from .utils import *
 from .const import (
     DOMAIN,
     # Config keys
@@ -19,14 +19,14 @@ from .const import (
     CONF_GREETINGS, CONF_TIME_SLOTS, CONF_DND, CONF_BOLD_PREFIX,
     # Service keys (Inputs)
     CONF_MESSAGE, CONF_TITLE, CONF_TARGETS, CONF_DATA, CONF_TARGET_DATA,
-    CONF_PRIORITY, CONF_SKIP_GREETING, CONF_INCLUDE_TIME, CONF_OVERRIDE_GREETINGS,
+    CONF_PRIORITY, CONF_SKIP_GREETING, CONF_INCLUDE_TIME, CONF_PRIORITY_VOLUME, CONF_OVERRIDE_GREETINGS,
     # Inner Channel keys
-    CONF_SERVICE, CONF_SERVICE_DATA, CONF_TARGET, CONF_ENTITY_ID,
+    CONF_SERVICE, CONF_TARGET, CONF_ENTITY_ID, # CONF_SERVICE_DATA,
     CONF_IS_VOICE, CONF_ALT_SERVICES, CONF_TYPE,
     # Defaults
     DEFAULT_NAME, DEFAULT_DATE_FORMAT, DEFAULT_INCLUDE_TIME,
     DEFAULT_GREETINGS, DEFAULT_TIME_SLOTS, DEFAULT_DND, 
-    DEFAULT_BOLD_PREFIX, PRIORITY_VOLUME, COMPANION_COMMANDS
+    DEFAULT_BOLD_PREFIX, DEFAULT_PRIORITY_VOLUME, COMPANION_COMMANDS
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,81 +34,7 @@ _LOGGER = logging.getLogger(__name__)
 _ORIGINAL_STATES = {}
 
 # ==============================================================================
-# HELPER FUNCTIONS
-# ==============================================================================
-
-def estimate_tts_duration(text: str) -> float:
-    """Stima la durata del messaggio in secondi basandosi sulle parole."""
-    if not text: return 0
-    # Media: 2.5 parole al secondo circa (o 150 parole/minuto)
-    words = len(text.split())
-    estimated_seconds = (words / 2.5) + 1.5 # +1.5s di buffer/latenza avvio
-    return max(3.5, estimated_seconds) # Minimo 3.5 secondi
-
-def is_time_in_range(start_str: str, end_str: str, now_time) -> bool:
-    """Controlla se l'orario attuale è in un range (gestisce accavallamento notte)."""
-    start = dt_util.parse_time(start_str)
-    end = dt_util.parse_time(end_str)
-    if start <= end:
-        return start <= now_time <= end
-    else:
-        return start <= now_time or now_time <= end
-
-def get_current_slot_info(slots_conf: dict, now_time) -> tuple:
-    """Restituisce (nome_slot, volume) basandosi sull'ora attuale."""
-    # Se la config è vuota, usiamo i default di const.py
-    if not slots_conf:
-        slots_conf = DEFAULT_TIME_SLOTS
-    sorted_slots = []
-    for name, data in slots_conf.items():
-        # Parsing sicuro dell'orario
-        t_str = data.get("start")
-        t_obj = dt_util.parse_time(t_str) if t_str else None
-        vol_val = data.get("volume", 0.2)
-        if t_obj:
-            sorted_slots.append((name, t_obj, vol_val))
-    # Ordina per orario di inizio
-    sorted_slots.sort(key=lambda x: x[1])
-    if not sorted_slots:
-        # Fallback estremo se nessun orario è valido
-        return "default", 0.2
-    # Logica: Inizializziamo con l'ultimo slot della lista.
-    # Questo copre il caso "notte" (es. dalle 23:00 alle 07:00).
-    # Se sono le 02:00, il loop sotto non scatterà mai, e rimarrà valido l'ultimo slot (night).
-    current_slot = sorted_slots[-1][0]
-    current_vol = sorted_slots[-1][2]
-    for name, start_time, vol_val in sorted_slots:
-        if now_time >= start_time:
-            current_slot = name
-            current_vol = vol_val  
-    return current_slot, current_vol
-
-def clean_text_for_tts(text: str) -> str:
-    """Rimuove caratteri speciali per la sintesi vocale."""
-    if not text: return ""
-    text = re.sub(r'[*_`\[\]]', '', text) # Via markdown
-    text = re.sub(r'http\S+', '', text)    # Via URL
-    return text.strip()
-
-def sanitize_text_visual(text: str, parse_mode: str = None) -> str:
-    """Pulisce o esegue l'escape del testo per visualizzazione (HTML/Markdown)."""
-    if not text: return ""
-    if parse_mode and "html" in parse_mode.lower():
-        text = text.replace("<", "&lt;").replace(">", "&gt;")
-    return text
-
-def apply_formatting(text: str, parse_mode: str, style: str = "bold") -> str:
-    """Applica la formattazione (grassetto) in base al parse_mode."""
-    if not text: return ""
-    mode = parse_mode.lower() if parse_mode else ""
-    if "html" in mode:
-        if style == "bold": return f"<b>{text}</b>"
-    elif "markdown" in mode:
-        return f"**{text}**" 
-    return text
-
-# ==============================================================================
-# LOGICA DI RESUME (Ispirata a Google Home Resume)
+# LOGICA DI RESUME
 # ==============================================================================
 
 async def _get_player_snapshot(hass: HomeAssistant, entity_id: str) -> dict:
@@ -186,7 +112,7 @@ CHANNEL_SCHEMA = vol.Schema({
     vol.Required(CONF_SERVICE): cv.string,
     vol.Optional(CONF_TARGET): vol.Any(cv.string, vol.All(cv.ensure_list, [cv.string])), #cv.string, 
     vol.Optional(CONF_IS_VOICE, default=False): cv.boolean,
-    vol.Optional(CONF_SERVICE_DATA): dict,
+    #vol.Optional(CONF_SERVICE_DATA): dict,
     vol.Optional(CONF_ALT_SERVICES): dict
 })
 
@@ -198,6 +124,7 @@ CONFIG_SCHEMA = vol.Schema({
         vol.Optional(CONF_DATE_FORMAT, default=DEFAULT_DATE_FORMAT): cv.string,
         vol.Optional(CONF_INCLUDE_TIME, default=DEFAULT_INCLUDE_TIME): cv.boolean,
         vol.Optional(CONF_BOLD_PREFIX, default=DEFAULT_BOLD_PREFIX): cv.boolean,
+        vol.Optional(CONF_PRIORITY_VOLUME, default=DEFAULT_PRIORITY_VOLUME): cv.string,
         # Validazione dizionario slot orari
         vol.Optional(CONF_TIME_SLOTS, default=DEFAULT_TIME_SLOTS): vol.Schema({
             cv.string: TIME_SLOT_SCHEMA
@@ -220,6 +147,7 @@ SEND_SERVICE_SCHEMA = vol.Schema({
     vol.Optional(CONF_PRIORITY): cv.boolean,
     vol.Optional(CONF_SKIP_GREETING): cv.boolean,
     vol.Optional(CONF_INCLUDE_TIME): cv.boolean,
+    vol.Optional(CONF_PRIORITY_VOLUME): cv.string,
     vol.Optional(CONF_ASSISTANT_NAME): cv.string,
     vol.Optional(CONF_BOLD_PREFIX): cv.boolean,
     vol.Optional(CONF_OVERRIDE_GREETINGS): dict,
@@ -235,11 +163,13 @@ async def async_setup(hass: HomeAssistant, config: dict):
     if DOMAIN not in config:
         return True
     conf = config[DOMAIN]
+
     # --- CONFIGURAZIONE VARIABILI ---
     channels_config = conf[CONF_CHANNELS]
     global_name = conf[CONF_ASSISTANT_NAME]
     global_date_fmt = conf[CONF_DATE_FORMAT]
     global_include_time = conf[CONF_INCLUDE_TIME]
+    global_priority_volume = conf[CONF_PRIORITY_VOLUME]
     time_slots_conf = conf.get(CONF_TIME_SLOTS, DEFAULT_TIME_SLOTS)
     dnd_conf = conf.get(CONF_DND, DEFAULT_DND)
     base_greetings = conf.get(CONF_GREETINGS, DEFAULT_GREETINGS)
@@ -247,7 +177,12 @@ async def async_setup(hass: HomeAssistant, config: dict):
     # --- INIZIALIZZAZIONE CODA TTS ---
     # Usiamo asyncio.Queue per una coda FIFO thread-safe
     voice_queue = asyncio.Queue()
-
+    # Used in 
+    hass.data[DOMAIN] = {
+            "conf": conf,
+            "voice_queue": voice_queue
+        }
+    ############################################################################
     async def voice_queue_worker():
         """Lavoratore in background che consuma la coda vocale."""
         _LOGGER.debug("UniNotifier: Voice Queue Worker avviato.")
@@ -267,6 +202,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
                     })
                 # 3. ESECUZIONE NOTIFICA
                 _LOGGER.debug(f"UniNotifier: Elaborazione messaggio vocale: {task['text_content'][:35]}...")
+                _LOGGER.debug(f"UniNotifier: {task['physical_players']} {task['target_volume']} {task['service']} {task['payload']} ")
                 await hass.services.async_call(task['domain'], task['service'], task['payload'])
                 # 4. ATTESA FINE MESSAGGIO
                 wait_time = estimate_tts_duration(task['text_content'])
@@ -310,6 +246,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
         override_name = call.data.get(CONF_ASSISTANT_NAME, global_name)
         skip_greeting = call.data.get(CONF_SKIP_GREETING, False)
         include_time = call.data.get(CONF_INCLUDE_TIME, global_include_time)
+        priority_volume = call.data.get(CONF_PRIORITY_VOLUME, global_priority_volume)
         is_priority = call.data.get(CONF_PRIORITY, False)
         global_bold_setting = conf.get(CONF_BOLD_PREFIX, DEFAULT_BOLD_PREFIX)
         use_bold_prefix = call.data.get(CONF_BOLD_PREFIX, global_bold_setting)
@@ -344,7 +281,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
         # ======================================================================
         for target_alias in targets:
             if target_alias not in channels_config:
-                _LOGGER.info(f"UniNotifier: Target '{target_alias}' sconosciuto.")
+                _LOGGER.debug(f"UniNotifier: Target '{target_alias}' sconosciuto.")
                 continue
             channel_conf = channels_config[target_alias]
             _LOGGER.debug(f"UniNotifier: Channel Configuration {channel_conf }")
@@ -357,7 +294,15 @@ async def async_setup(hass: HomeAssistant, config: dict):
             _LOGGER.debug(f"UniNotifier: Specific Data {specific_data}")
             target_raw_message = specific_data.pop(CONF_MESSAGE, global_raw_message)
 
-            ####################################################################               
+            # --- LOGICA DINAMICA TARGET  ---
+            # Cerchiamo entity_id nella chiamata, se non c'è usiamo il target del file yaml
+            dynamic_entities = specific_data.pop(CONF_ENTITY_ID, channel_conf.get(CONF_TARGET))
+            # Normalizzazione in lista
+            if isinstance(dynamic_entities, str): dynamic_entities = [dynamic_entities]
+            elif dynamic_entities is None: dynamic_entities = []
+            _LOGGER.debug(f"UniNotifier: Dynamic Entities {dynamic_entities}")
+
+            ####################################################################
             # B. Selezione Servizio
             service_type = specific_data.pop(CONF_TYPE, runtime_data.get(CONF_TYPE, None))
             alt_services_conf = channel_conf.get(CONF_ALT_SERVICES, {})
@@ -367,23 +312,22 @@ async def async_setup(hass: HomeAssistant, config: dict):
             if service_type and service_type in alt_services_conf:
                 target_service_conf = alt_services_conf[service_type]
                 full_service_name = target_service_conf[CONF_SERVICE]
-                base_service_payload = target_service_conf.get(CONF_SERVICE_DATA, {}) or {}
+                #base_service_payload = target_service_conf.get(CONF_SERVICE_DATA, {}) or {}
                 is_voice_channel = False 
             else:
                 full_service_name = channel_conf[CONF_SERVICE]
-                base_service_payload = channel_conf.get(CONF_SERVICE_DATA, {}) or {}
+                #base_service_payload = channel_conf.get(CONF_SERVICE_DATA, {}) or {}
                 is_voice_channel = channel_conf[CONF_IS_VOICE]
             _LOGGER.debug(f"UniNotifier: Full Service Name {full_service_name}")
-            _LOGGER.debug(f"UniNotifier: Base Service Payload {base_service_payload}")
+            #_LOGGER.debug(f"UniNotifier: Base Service Payload {base_service_payload}")
             # Estrai domini per controlli successivi
             try:
                 srv_domain, srv_name = full_service_name.split(".", 1)
             except ValueError:
                 _LOGGER.error(f"UniNotifier: Servizio non valido {full_service_name}")
                 continue
-
             ####################################################################   
-            # C. Check Comandi
+            # C. Check Comandi MOBILE APP
             is_command_message = False
             if target_raw_message in COMPANION_COMMANDS or str(target_raw_message).startswith("command_"):
                 is_command_message = True
@@ -448,50 +392,35 @@ async def async_setup(hass: HomeAssistant, config: dict):
                         # CASO B: Niente titolo -> Prefisso va nel Messaggio
                         # (clean_prefix + spazio + saluti + messaggio)
                         final_msg = f"{clean_prefix} {greeting_part}{clean_msg}"
-                        
+
             ####################################################################
-            # E. Determinazione del Volume
+            # E. Determinazione del Volume attuale
             override_volume = specific_data.get("volume", runtime_data.get("volume"))
             if override_volume is not None:
                 try: target_volume = float(override_volume)
                 except ValueError: target_volume = slot_volume
             elif is_priority:
-                target_volume = PRIORITY_VOLUME
+                target_volume = priority_volume
             else:
                 target_volume = slot_volume
 
             ####################################################################
-            # F. IDENTIFICAZIONE DEI PLAYER FISICI (Per Volume e Invio)
-            # 1. Cerca in tts (media_player_entity_id standard)
-            tts_players = base_service_payload.get("media_player_entity_id", [])
-            if isinstance(tts_players, str): tts_players = [tts_players]
-            # 2. Cerca in notify/alexa (target nel config del canale)
-            notify_targets = channel_conf.get(CONF_TARGET, [])
-            if isinstance(notify_targets, str): notify_targets = [notify_targets]
-            _LOGGER.debug(f"UniNotifier: MediaPlayer o ChatId o tts target {notify_targets}")
-            # 3. Lista unificata dei player a cui impostare il volume
-            media_players_targets = []
-            if tts_players:
-                media_players_targets.extend(tts_players)
-            if notify_targets and is_voice_channel:
-                media_players_targets.extend(notify_targets)
-
-            ####################################################################
-            # G. Applicazione Volume e Check DND (Solo Canali Voce)
+            # F. Applicazione Volume e Check DND (Solo Canali Voce)
             if is_voice_channel:
                 if is_dnd_active and not is_priority and override_volume is None:
-                    _LOGGER.info(f"UniNotifier: Skipped '{target_alias}' (DND attivo)")
+                    _LOGGER.debug(f"UniNotifier: Skipped '{target_alias}' (DND attivo)")
                     continue
-                _LOGGER.debug(f"UniNotifier: MediaPlayer {media_players_targets} - Volume {target_volume}")
 
             ####################################################################
-            # H. Costruzione Payload Finale 
-            service_payload = base_service_payload.copy()
+            # G. Costruzione Payload Finale 
+            #service_payload = base_service_payload.copy()
+            service_payload = {}
+            _LOGGER.debug(f"UniNotifier: final_title '{final_title}' ")
             # Mapping Messaggio
             if srv_domain == "telegram_bot":
                 if "parse_mode" not in service_payload and parse_mode:
                     service_payload["parse_mode"] = parse_mode
-                if service_type in ["photo", "video"]: 
+                if service_type in ["photo", "video", "animation", "voice", "document"]: 
                     service_payload["caption"] = final_msg
                 else: 
                     service_payload["message"] = final_msg
@@ -499,27 +428,24 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 service_payload["message"] = final_msg # Standard per TTS e Notify
             if final_title: 
                 service_payload["title"] = final_title
-                if service_type in ["photo", "video"]: 
+                if service_type in ["photo", "video", "animation", "voice", "document"]:  
                     service_payload["caption"] = final_title + " " + final_msg
                     service_payload.pop("title", None)
-            ####################################################################           
-            # I. Routing dei Target nel Payload
-            # Caso 1: TTS usa 'media_player_entity_id' già presente nei dati base.
-            # Caso 2: Provider TTS (es. google_translate)
-            # if srv_domain == "tts" and CONF_TARGET in channel_conf:
-            #     provider_entity = channel_conf.get(CONF_TARGET)
-            #     if provider_entity:
-            #         service_payload[ATTR_ENTITY_ID] = provider_entity
-            conf_target_value = channel_conf.get(CONF_TARGET)
             
+            ####################################################################           
+            # H. Routing dei Target nel Payload
+            #  DA ELIMINARE LA PARTE TTS
+            conf_target_value = channel_conf.get(CONF_TARGET)
+            #service_payload[CONF_TARGET] = conf_target_value
             if conf_target_value:
                 if srv_domain == "tts":
                     service_payload[ATTR_ENTITY_ID] = conf_target_value
                 else:
                     # Per notify (Discord, Telegram, etc.) aggiungiamo 'target' al payload
                     service_payload[CONF_TARGET] = conf_target_value
+                    
             ####################################################################    
-            # J. Merge Dati Accessori (alexa type, telegram images, etc.)
+            # I. Merge Dati Accessori (alexa type, telegram images, etc.)
             all_additional_data = {}
             if runtime_data: all_additional_data.update(runtime_data)
             if specific_data: all_additional_data.update(specific_data)
@@ -535,10 +461,14 @@ async def async_setup(hass: HomeAssistant, config: dict):
                     # Per altri servizi, merge diretto
                     service_payload.update(all_additional_data)
 
+            ####################################################################
             physical_players = []
-            # --- DISPATCH LOGIC: CODA vs IMMEDIATO ---
+            # J--- DISPATCH LOGIC: CODA PER VOCE vs IMMEDIATO ---
             if srv_domain == "telegram_bot":
                 p = service_payload.copy()
+                ### PRENDO IL TARGET DALLA CONF ####
+                notify_targets = channel_conf.get(CONF_TARGET, [])
+                if isinstance(notify_targets, str): notify_targets = [notify_targets]
                 p[CONF_TARGET] = str(notify_targets[0]) # Telegram vuole 'target' per il chat_id
                 _LOGGER.debug(f"UniNotifier: Final payload {p} - Service data {srv_domain}/{srv_name}")
                 tasks.append(hass.services.async_call(srv_domain, srv_name, p))
@@ -546,17 +476,23 @@ async def async_setup(hass: HomeAssistant, config: dict):
             # 2. CANALI VOCALI (TTS) -> IN CODA
             elif is_voice_channel:
                 # CASO A: Dominio TTS (es. tts.speak o tts.google_say)
-                # I player sono nel payload (media_player_entity_id)
+                # I player sono nel payload (media_player_entity_id) ######################### modifica 1 febbraio
                 if srv_domain == "tts":
-                    tts_entities = service_payload.get("media_player_entity_id", [])
-                    if isinstance(tts_entities, str):
-                        physical_players.append(tts_entities)
-                    else:
-                        physical_players.extend(tts_entities)
+                    if dynamic_entities:
+                        service_payload["media_player_entity_id"] = dynamic_entities
+                        tts_entities = service_payload.get("media_player_entity_id", [])
+                        if isinstance(tts_entities, str):
+                            physical_players.append(tts_entities)
+                        else:
+                            physical_players.extend(tts_entities)
                 # CASO B: Dominio NOTIFY
                 # I player sono definiti nel 'target' della configurazione del canale
                 elif srv_domain == "notify":
-                    notify_targets = channel_conf.get(CONF_TARGET, [])
+                    notify_targets = ""
+                    if dynamic_entities:
+                        notify_targets = dynamic_entities
+                    else:
+                        notify_targets = channel_conf.get(CONF_TARGET, [])
                     if isinstance(notify_targets, str):
                         physical_players.append(notify_targets)
                     else:
@@ -585,5 +521,8 @@ async def async_setup(hass: HomeAssistant, config: dict):
         if tasks:
             await asyncio.gather(*tasks)
 
+    hass.async_create_task(discovery.async_load_platform(hass, "sensor", DOMAIN, {}, config))
+    hass.async_create_task(discovery.async_load_platform(hass, "binary_sensor", DOMAIN, {}, config))
+    #hass.async_create_task(discovery.async_load_platform(hass, "select", DOMAIN, {}, config))
     hass.services.async_register(DOMAIN, "send", async_send_notification, schema=SEND_SERVICE_SCHEMA)
     return True

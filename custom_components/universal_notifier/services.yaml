@@ -61,11 +61,18 @@ send:
     # --- OVERRIDES & FLAGS ---
     priority:
       name: Priority Message
-      description: If active (true), bypasses DND and sets the volume to 90% for voice assistants.
+      description: If active (true), bypasses DND for voice assistants.
       required: false
       default: false
       selector:
         boolean:
+
+    priority_volume:
+      name: Priority Volume
+      description: If priority is active, set the priority volume for voice assistants.
+      required: false
+      selector:
+        text:
 
     assistant_name:
       name: Assistant Name Override
