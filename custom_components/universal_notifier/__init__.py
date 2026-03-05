@@ -21,7 +21,7 @@ from .const import (
     CONF_MESSAGE, CONF_TITLE, CONF_TARGETS, CONF_DATA, CONF_TARGET_DATA,
     CONF_PRIORITY, CONF_SKIP_GREETING, CONF_INCLUDE_TIME, CONF_OVERRIDE_GREETINGS,
     # Inner Channel keys
-    CONF_SERVICE, CONF_SERVICE_DATA, CONF_TARGET, CONF_ENTITY_ID,
+    CONF_SERVICE, CONF_SERVICE_DATA, CONF_TARGET, CONF_CHAT_ID, CONF_ENTITY_ID,
     CONF_IS_VOICE, CONF_ALT_SERVICES, CONF_TYPE,
     # Defaults
     DEFAULT_NAME, DEFAULT_DATE_FORMAT, DEFAULT_INCLUDE_TIME,
@@ -184,7 +184,8 @@ TIME_SLOT_SCHEMA = vol.Schema({
 # Schema per un canale
 CHANNEL_SCHEMA = vol.Schema({
     vol.Required(CONF_SERVICE): cv.string,
-    vol.Optional(CONF_TARGET): vol.Any(cv.string, vol.All(cv.ensure_list, [cv.string])), #cv.string, 
+    vol.Optional(CONF_TARGET): vol.Any(cv.string, vol.All(cv.ensure_list, [cv.string])), # Legacy for non-Telegram
+    vol.Optional(CONF_CHAT_ID): vol.Any(cv.string, vol.All(cv.ensure_list, [cv.string])), # New Telegram API
     vol.Optional(CONF_IS_VOICE, default=False): cv.boolean,
     vol.Optional(CONF_SERVICE_DATA): dict,
     vol.Optional(CONF_ALT_SERVICES): dict
@@ -465,8 +466,9 @@ async def async_setup(hass: HomeAssistant, config: dict):
             # 1. Cerca in tts (media_player_entity_id standard)
             tts_players = base_service_payload.get("media_player_entity_id", [])
             if isinstance(tts_players, str): tts_players = [tts_players]
-            # 2. Cerca in notify/alexa (target nel config del canale)
-            notify_targets = channel_conf.get(CONF_TARGET, [])
+            # 2. Cerca in notify/alexa (target/chat_id nel config del canale)
+            # Prioritize chat_id for Telegram, fallback to target for legacy
+            notify_targets = channel_conf.get(CONF_CHAT_ID) or channel_conf.get(CONF_TARGET, [])
             if isinstance(notify_targets, str): notify_targets = [notify_targets]
             _LOGGER.debug(f"UniNotifier: MediaPlayer o ChatId o tts target {notify_targets}")
             # 3. Lista unificata dei player a cui impostare il volume
@@ -510,14 +512,22 @@ async def async_setup(hass: HomeAssistant, config: dict):
             #     provider_entity = channel_conf.get(CONF_TARGET)
             #     if provider_entity:
             #         service_payload[ATTR_ENTITY_ID] = provider_entity
+            
+            # For Telegram: prefer chat_id (new API), fallback to target (legacy)
+            conf_chat_id_value = channel_conf.get(CONF_CHAT_ID)
             conf_target_value = channel_conf.get(CONF_TARGET)
             
-            if conf_target_value:
-                if srv_domain == "tts":
-                    service_payload[ATTR_ENTITY_ID] = conf_target_value
-                else:
-                    # Per notify (Discord, Telegram, etc.) aggiungiamo 'target' al payload
-                    service_payload[CONF_TARGET] = conf_target_value
+            if srv_domain == "tts" and conf_target_value:
+                service_payload[ATTR_ENTITY_ID] = conf_target_value
+            elif srv_domain == "telegram_bot":
+                # Use new chat_id if available, otherwise fallback to target
+                if conf_chat_id_value:
+                    service_payload[CONF_CHAT_ID] = conf_chat_id_value
+                elif conf_target_value:
+                    service_payload[CONF_CHAT_ID] = conf_target_value  # Convert old target to chat_id
+            elif conf_target_value:
+                # Per notify (Discord, etc.) aggiungiamo 'target' al payload
+                service_payload[CONF_TARGET] = conf_target_value
             ####################################################################    
             # J. Merge Dati Accessori (alexa type, telegram images, etc.)
             all_additional_data = {}
@@ -539,7 +549,9 @@ async def async_setup(hass: HomeAssistant, config: dict):
             # --- DISPATCH LOGIC: CODA vs IMMEDIATO ---
             if srv_domain == "telegram_bot":
                 p = service_payload.copy()
-                p[CONF_TARGET] = str(notify_targets[0]) # Telegram vuole 'target' per il chat_id
+                # Use chat_id (new API) if not already set in service_payload
+                if CONF_CHAT_ID not in p and notify_targets:
+                    p[CONF_CHAT_ID] = str(notify_targets[0])
                 _LOGGER.debug(f"UniNotifier: Final payload {p} - Service data {srv_domain}/{srv_name}")
                 tasks.append(hass.services.async_call(srv_domain, srv_name, p))
             
