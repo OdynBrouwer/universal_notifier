@@ -27,6 +27,7 @@ CONF_BOLD_PREFIX = "bold_prefix"
 CONF_SERVICE = "service"
 CONF_SERVICE_DATA = "service_data"
 CONF_TARGET = "target"
+CONF_CHAT_ID = "chat_id"  # Telegram bot API - replaces target
 CONF_ENTITY_ID = "entity_id"
 CONF_IS_VOICE = "is_voice"
 CONF_ALT_SERVICES = "alt_services"
